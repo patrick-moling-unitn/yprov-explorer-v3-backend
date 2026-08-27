@@ -151,7 +151,7 @@ router.post("/",  async (req, res) => {
         if (result == true){
             let options = { expiresIn: JWT_TOKEN_DURATION }
             let payload = {id: authenticatedUser._id, email: authenticatedUser.email, 
-                administrator: authenticatedUser.administrator, banned: authenticatedUser.banned, expiresIn: options.expiresIn}
+                administrator: authenticatedUser.administrator, expiresIn: options.expiresIn}
             res.status(200).json({ authToken: jwt.sign(payload, process.env.JWT_SECRET, options) });
         }
         else

@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
+const crypto = require("crypto");
 const mailProvider = require('./mailProvider')
 
 const RegisteringUser = require('../models/registeringUser');
@@ -7,9 +8,12 @@ const AuthenticatedUser = require('../models/authenticatedUser');
 const error = require('../enums/errorCodes.cjs.js');
 
 const router = express.Router();
-//costanti
-const EMAIL_CODE_EXPIRATION_TIME_MIN=15
-const MIN_USER_PASSWORD_LENGTH=8;
+
+const EMAIL_CODE_EXPIRATION_TIME_MIN = 15;
+const VERIFICATION_CODE_LENGTH = 6; //1 chance of guessing it out of 200.000 with 5 attempts
+const MAX_VERIFICATION_ATTEMPTS = 5;
+
+const MIN_USER_PASSWORD_LENGTH = 8;
 const SALT_ROUNDS = Number(process.env.HASHING_SALT_ROUNDS);
 
 const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
@@ -54,7 +58,6 @@ router.get("/", async (req, res) => {
  *  id: the identifier of the registering user used by the client for the confirmation
  */
 router.post("/",  async (req, res) => {
-    //Errore precedente: pensare che /registeringUsers/REG_USER_ID/code venisse indirizzato a questo metodo. E' falso!
     if(req.body.email || req.body.password){ 
         alreadyRegisteringEmail = await RegisteringUser.findOne({ email: req.body.email.toLowerCase()});
         let verificationCode = alreadyRegisteringEmail ? alreadyRegisteringEmail.verificationCode : null;
@@ -83,11 +86,16 @@ router.post("/",  async (req, res) => {
         if (req.body.password.length < MIN_USER_PASSWORD_LENGTH)
             return res.status(400).json({ error: error("REGISTRATING_USER_INVALID_PASSWORD") });
 
+        let code = "";
+        for (let i=0; i<VERIFICATION_CODE_LENGTH; i++)
+            code += crypto.randomInt(0, 10);
+
         let reguser = new RegisteringUser({
             email: req.body.email,
             passwordHash: await bcrypt.hash(req.body.password, SALT_ROUNDS),
             verificationCode: {
-                code: Math.floor(100000 + Math.random() * 900000).toString(),
+                code,
+                attempts: 0,
                 expireDate: new Date(Date.now() + EMAIL_CODE_EXPIRATION_TIME_MIN * 60 * 1000)
             }
         });
@@ -102,7 +110,7 @@ router.post("/",  async (req, res) => {
             await reguser.save();
             res.location(API_V + '/registeringUsers/' + reguser._id).status(201).json({id: reguser._id});
         }catch(err){
-            return res.status(500).json({ errorMessage: err });
+            return res.status(500).json({ error: { message: err } });
         }
     }else
         return res.status(400).json({ error: error("MISSING_QUERY_PARAMETERS") });
@@ -128,8 +136,20 @@ router.post("/:id/code",  async (req, res, next) => {
         await RegisteringUser.deleteOne({ _id: req.params.id });
         return res.status(400).json({ error: error("REGISTRATION_CODE_EXPIRED") });
     }
-    if(verifyinguser.verificationCode.code != req.body.code)
+    if(verifyinguser.verificationCode.code != req.body.code){
+        verifyinguser.verificationCode.attempts++; 
+        if (verifyinguser.verificationCode.attempts >= MAX_VERIFICATION_ATTEMPTS){
+            await RegisteringUser.deleteOne({ _id: req.params.id });
+            return res.status(400).json({ error: error("REGISTRATION_CODE_MAX_ATTEMPTS_REACHED") });
+        }else{
+            try{
+                await verifyinguser.save();
+            }catch(err){
+                return res.status(500).json({ error: { message: err } });
+            }
+        }
         return res.status(400).json({ error: error("REGISTRATION_CODE_INVALID") });
+    }
     req['registeringUser'] = verifyinguser;
     next(); //CONTINUES BELOW<!!!>
 });
@@ -156,7 +176,7 @@ router.post("/:id/code",  async (req, res) => {
         if (LOG_MODE >= 1) console.log('Registering user created!');
         return res.location(API_V + '/authenticatedUsers/' + user._id).status(201).send();
     }catch(err){
-        return res.status(500).json({ errorMessage: err });
+        return res.status(500).json({ error: { message: err } });
     }
 });
 

@@ -7,6 +7,7 @@ module.exports = mongoose.model('RegisteringUser', new Schema({
     email: {type: String, lowercase: true, unique: true},
     verificationCode: {
         code: String,
-        expireDate: Date
+        expireDate: Date,
+        attempts: Number
     }
 }, {timestamps: true}));

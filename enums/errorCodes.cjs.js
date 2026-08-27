@@ -21,6 +21,7 @@ const errorCodes = Object.freeze([
     "WRONG_PASSWORD",
     "NOT_FOUND",
     "EMAIL_CHOSEN_NOT_VALID",
+    "REGISTRATION_CODE_MAX_ATTEMPTS_REACHED",
 
     //"ADD_NEW_ERROR_HERE",
 ]);

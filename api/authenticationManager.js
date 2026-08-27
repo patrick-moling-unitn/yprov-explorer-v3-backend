@@ -114,7 +114,7 @@ router.put("/:id", async (req, res) => {
         try{
             authenticatedUser.save();
         }catch(err){
-            return res.status(500).json({ errorMessage: err });
+            return res.status(500).json({ error: { message: err } });
         }
 
         res.status(200).json(authenticatedUser);
@@ -156,7 +156,7 @@ router.post("/",  async (req, res) => {
             try{
                 authenticatedUser.save();
             }catch(err){
-                return res.status(500).json({ errorMessage: err });
+                return res.status(500).json({ error: { message: err } });
             }
             res.status(200).json({ authToken: jwt.sign(payload, process.env.JWT_SECRET, options) });
         }

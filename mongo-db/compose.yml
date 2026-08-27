@@ -1,0 +1,15 @@
+services:
+  mongodb:
+    image: mongo:8.3.8-noble
+    container_name: mongodb
+    restart: unless-stopped
+
+    ports:
+      - "27017:27017"
+
+    volumes:
+      - ./data:/data/db
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_DB_PASSWORD}

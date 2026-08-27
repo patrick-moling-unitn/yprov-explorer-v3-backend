@@ -33,7 +33,7 @@ router.get("/", async (req, res) => {
             return {
                 self: API_V + '/registeringUsers/' + user._id,
                 email: user.email,
-                passwordHash: user.passwordHash
+                expireDate: user.verificationCode.expireDate
             };
         });
         res.status(200).json(usersList);
@@ -146,7 +146,7 @@ router.post("/:id/code",  async (req, res) => {
 	let user = new AuthenticatedUser({
         email: newuser.email,
         administrator: false,
-        points: 0,
+        lastLogin: new Date(),
         banned: false,
         passwordHash: newuser.passwordHash
     });

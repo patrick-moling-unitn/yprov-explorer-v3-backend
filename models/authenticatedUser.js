@@ -6,5 +6,6 @@ module.exports = mongoose.model('AuthenticatedUser', new Schema({
     passwordHash: String,
     email: {type: String, lowercase: true, unique: true},
     banned: Boolean,
-    administrator: Boolean
+    administrator: Boolean,
+    lastLogin: Date
 }));

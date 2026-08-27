@@ -12,7 +12,7 @@ const app = express()
 app.use(cors())
 app.use(express.json())
 
-const API_V = "/api/"+process.env.API_VERSION;
+const API_V = process.env.API_VERSION;
 const PORT = process.env.PORT;
 
 app.get(API_V+"/authenticatedUsers", requestValidator) //Devi essere amministratore per ottenere gli utenti

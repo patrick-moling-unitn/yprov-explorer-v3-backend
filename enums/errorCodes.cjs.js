@@ -3,16 +3,10 @@ const errorCodes = Object.freeze([
     "UNAUTHORIZED",
     "MISSING_QUERY_PARAMETER",
     "ID_NOT_FOUND",
-    "USER_NOT_FOUND",
-    "INFUFFICIENT_POINTS",
-    "OUT_OF_STOCK",
-    "INTERNAL_ERROR",
-    "WRONG_DATA",
-    "ALL_ANSWERED",
-    "MISSING_QUESTION",
-    "NO_MATCHING_REPORT_ID",
-    "ALREADY_RESOLVED_REPORT",
-    "BANNED",
+    "USER_NOT_FOUND",   // <!-- IMPORTANT --!>
+    "INTERNAL_ERROR",   // Do not CHANGE the order of the errors
+    "WRONG_DATA",       // Do not DELETE any error
+    "BANNED",           // In order to ADD an error follow the tip at the bottom
     "MISSING_TOKEN",
     "INVALID_TOKEN",
     "AUTHENTICATED_USER_EMAIL_NOT_FOUND",
@@ -23,12 +17,12 @@ const errorCodes = Object.freeze([
     "INVALID_REGISTRATION_REQUEST",
     "REGISTRATION_CODE_EXPIRED",
     "REGISTRATION_CODE_INVALID",
-    "COORDINATES_CHOOSEN_NOT_VALID",
-    "MISSING_QUESTION_OPTIONS",
     "NO_MATCHING_AUTHENTICATED_USER_ID",
     "WRONG_PASSWORD",
     "NOT_FOUND",
-    "EMAIL_CHOSEN_NOT_VALID"
+    "EMAIL_CHOSEN_NOT_VALID",
+
+    //"ADD_NEW_ERROR_HERE",
 ]);
 
 const getError = (errorToSearch) => ({code: errorCodes.indexOf(errorToSearch), message: errorToSearch});

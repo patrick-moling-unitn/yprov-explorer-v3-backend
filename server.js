@@ -1,36 +1,42 @@
+const mongoose = require('mongoose');
 const express = require('express')
 const cors = require('cors')
-const { MongoClient } = require('mongodb')
 require('dotenv').config()
+
+const authenticationManager = require('./api/authenticationManager');
+const registrationManager = require('./api/registrationManager');
+const requestValidator = require('./api/requestValidator');
 
 const app = express()
 
 app.use(cors())
 app.use(express.json())
 
-const client = new MongoClient(process.env.MONGO_URI)
+const API_V = "/api/"+process.env.API_VERSION;
+const PORT = process.env.PORT;
 
-async function start() {
-  await client.connect()
+app.get(API_V+"/authenticatedUsers", requestValidator) //Devi essere amministratore per ottenere gli utenti
+app.delete(API_V+"/authenticatedUsers", requestValidator) //Devi essere amministratore per eliminare gli utenti
+app.put(API_V+"/authenticatedUsers", requestValidator) //Devi essere amministratore per bandire gli utenti
+app.put(API_V+"/authenticatedUsers/:id", requestValidator) //Devi essere amministratore per bandire gli utenti per id
+app.delete(API_V+"/authenticatedUsers/:id", requestValidator) //Devi essere amministratore per eliminare un utente
 
-  console.log('MongoDB connected')
+app.get(API_V+"/registeringUsers/", requestValidator) //Devi essere amministratore per ottenere tutti gli utenti in registrazione
+app.delete(API_V+"/registeringUsers/", requestValidator) //Devi essere amministratore per cancellare tutti gli utenti in registrazione
+app.delete(API_V+"/registeringUsers/:id", requestValidator) //Devi essere amministratore per cancellare un utente in registrazione per id
 
-  const db = client.db(process.env.MONGO_DB_NAME)
-  const users = db.collection('users')
+app.use(API_V+"/authenticatedUsers", authenticationManager)
+app.use(API_V+"/registeringUsers", registrationManager)
 
-  app.get('/api/users', async (req, res) => {
-    const result = await users.find().toArray()
-    res.json(result)
-  })
+app.get("/health", (req, res) => {
+  res.json({ healthy: true })
+})
 
-  app.post('/api/users', async (req, res) => {
-    const result = await users.insertOne(req.body)
-    res.json(result)
-  })
-
-  app.listen(8010, () => {
-    console.log('Backend running on http://localhost:8010')
-  })
-}
-
-start().catch(console.error)
+app.locals.db = mongoose.connect(process.env.MONGO_URI)
+.then(async () => {
+    console.log("Connected to Database");
+    app.listen(PORT, () => { console.log(`Listening on port ${PORT}`) })
+})
+.catch ((e) => {
+    console.log("Database connection failed", e);
+});

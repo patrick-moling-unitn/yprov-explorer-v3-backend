@@ -8,6 +8,10 @@ module.exports = mongoose.model('RegisteringUser', new Schema({
     verificationCode: {
         code: String,
         expireDate: Date,
-        attempts: Number
+        attempts: {
+            type: Number,
+            default: 0
+        },
+        secret: String
     }
 }, {timestamps: true}));

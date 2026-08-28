@@ -59,16 +59,19 @@ router.get("/", async (req, res) => {
  */
 router.post("/",  async (req, res) => {
     if(req.body.email || req.body.password){ 
-        alreadyRegisteringEmail = await RegisteringUser.findOne({ email: req.body.email.toLowerCase()});
-        let verificationCode = alreadyRegisteringEmail ? alreadyRegisteringEmail.verificationCode : null;
+        registeringUser = await RegisteringUser.findOne({ email: req.body.email.toLowerCase()});
+        let verificationCode = registeringUser ? registeringUser.verificationCode : null;
         if (verificationCode){ //IF USER IS ALREADY VERIFYING
             if (verificationCode.expireDate<new Date()){ //IF THE VERIFICATION CODE EXPIRED DELETE THE USER
-                await RegisteringUser.deleteOne(alreadyRegisteringEmail);
-                alreadyRegisteringEmail = null;
+                await RegisteringUser.deleteOne(registeringUser);
+                registeringUser = null;
             }else{  //IF THE VERIFICATION CODE IS VALID CHECK THE PASSWORD AND RETURN HIS USER ID
-                bcrypt.compare(req.body.password, alreadyRegisteringEmail.passwordHash, function (err, result) {
-                    if (result == true)
-                        res.status(200).json({ id: alreadyRegisteringEmail._id });
+                bcrypt.compare(req.body.password, registeringUser.passwordHash, function (err, result) {
+                    if (result == true){
+                        const secret = verificationCode.secret, expireDate = verificationCode.expireDate;
+                        res.status(200).json({ id: registeringUser._id, verificationCode: 
+                            { maxAttempts: MAX_VERIFICATION_ATTEMPTS, secret, expireDate }});
+                    }
                     else
                         res.status(400).json({ error: error("WRONG_PASSWORD") });
                 });
@@ -77,38 +80,42 @@ router.post("/",  async (req, res) => {
         }
         let email = req.body.email.toLowerCase()
         if(email.search("@")==-1 || email.search(".")==-1)
-            return res.status(400).json({ error: error("EMAIL_CHOOSEN_NOT_VALID") });
-        if(alreadyRegisteringEmail)
+            return res.status(400).json({ error: error("EMAIL_CHOSEN_NOT_VALID") });
+        if(registeringUser)
             return res.status(400).json({ error: error("REGISTRATING_USER_DUPLICATED_REQUEST") });
         alreadyExistingEmail = await AuthenticatedUser.findOne({ email: req.body.email.toLowerCase()});
         if(alreadyExistingEmail)
             return res.status(400).json({ error: error("EMAIL_ALREADY_REGISTERED") });
         if (req.body.password.length < MIN_USER_PASSWORD_LENGTH)
-            return res.status(400).json({ error: error("REGISTRATING_USER_INVALID_PASSWORD") });
+            return res.status(400).json({ error: error("REGISTRATING_USER_INVALID_PASSWORD"), minPasswordLength: MIN_USER_PASSWORD_LENGTH });
 
         let code = "";
         for (let i=0; i<VERIFICATION_CODE_LENGTH; i++)
             code += crypto.randomInt(0, 10);
+
+        const secret = crypto.randomBytes(4).toString("hex"),
+              expireDate = new Date(Date.now() + EMAIL_CODE_EXPIRATION_TIME_MIN * 60 * 1000);
 
         let reguser = new RegisteringUser({
             email: req.body.email,
             passwordHash: await bcrypt.hash(req.body.password, SALT_ROUNDS),
             verificationCode: {
                 code,
-                attempts: 0,
-                expireDate: new Date(Date.now() + EMAIL_CODE_EXPIRATION_TIME_MIN * 60 * 1000)
+                secret,
+                expireDate
             }
         });
 
         let mailOptions = {
-            subject: '[Explorer v3] Verify your email',
-            text: 'Your verification code is: '+ reguser.verificationCode.code + '\n' +
+            subject: '[Explorer] Verify your email',
+            text: 'Your verification code is '+ reguser.verificationCode.code + '\n' +
                   'The verification code will expire in '+EMAIL_CODE_EXPIRATION_TIME_MIN+' minutes.'
         };
         mailProvider.sendMail(req.body.email, mailOptions.subject, mailOptions.text);
         try{
             await reguser.save();
-            res.location(API_V + '/registeringUsers/' + reguser._id).status(201).json({id: reguser._id});
+            res.location(API_V + '/registeringUsers/' + reguser._id).status(201).json(
+                {id: reguser._id, verificationCode: { maxAttempts: MAX_VERIFICATION_ATTEMPTS, secret, expireDate }});
         }catch(err){
             return res.status(500).json({ error: { message: err } });
         }
@@ -174,6 +181,12 @@ router.post("/:id/code",  async (req, res) => {
     try{
         await user.save();
         if (LOG_MODE >= 1) console.log('Registering user created!');
+        let mailOptions = {
+            subject: '[Explorer] Welcome aboard',
+            text: 'Your registration was successful' + '\n' +
+                  'You can now login and enjoy the full functionalities of the Explorer!'
+        };
+        mailProvider.sendMail(newuser.email, mailOptions.subject, mailOptions.text);
         return res.location(API_V + '/authenticatedUsers/' + user._id).status(201).send();
     }catch(err){
         return res.status(500).json({ error: { message: err } });
@@ -189,9 +202,18 @@ router.post("/:id/code",  async (req, res) => {
  * PARAMS)
  *  id: the user identifier of the account you want to delete
  */
-router.delete('/:id', async (req, res) => {
-    if (req.loggedUser.administrator == true){
-        await AuthenticatedUser.deleteOne({ _id: req.params.id });
+router.delete('/:id', async (req, res, next) => {
+    if (req.loggedUser && req.loggedUser.administrator == true){
+        await RegisteringUser.deleteOne({ _id: req.params.id });
+        if (LOG_MODE >= 1) console.log('Registering user removed!');
+        res.status(204).send();
+    }else
+        next(); //CONTINUES BELOW<!!!>
+});
+
+router.delete('/:id/secret', async (req, res) => {
+    if (req.body.secret){
+        await RegisteringUser.deleteOne({ "verificationCode.secret": req.body.secret, _id: req.params.id });
         if (LOG_MODE >= 1) console.log('Registering user removed!');
         res.status(204).send();
     }else

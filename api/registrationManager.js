@@ -69,8 +69,7 @@ router.post("/",  async (req, res) => {
                 bcrypt.compare(req.body.password, registeringUser.passwordHash, function (err, result) {
                     if (result == true){
                         const secret = verificationCode.secret, expireDate = verificationCode.expireDate;
-                        res.status(200).json({ id: registeringUser._id, verificationCode: 
-                            { maxAttempts: MAX_VERIFICATION_ATTEMPTS, secret, expireDate }});
+                        res.status(200).json({ id: registeringUser._id, verificationCode: { secret, expireDate }});
                     }
                     else
                         res.status(400).json({ error: error("WRONG_PASSWORD") });
@@ -115,7 +114,7 @@ router.post("/",  async (req, res) => {
         try{
             await reguser.save();
             res.location(API_V + '/registeringUsers/' + reguser._id).status(201).json(
-                {id: reguser._id, verificationCode: { maxAttempts: MAX_VERIFICATION_ATTEMPTS, secret, expireDate }});
+                {id: reguser._id, verificationCode: { secret, expireDate }});
         }catch(err){
             return res.status(500).json({ error: { message: err } });
         }
@@ -155,7 +154,8 @@ router.post("/:id/code",  async (req, res, next) => {
                 return res.status(500).json({ error: { message: err } });
             }
         }
-        return res.status(400).json({ error: error("REGISTRATION_CODE_INVALID") });
+        const remainingAttempts = MAX_VERIFICATION_ATTEMPTS - verifyinguser.verificationCode.attempts;
+        return res.status(400).json({ error: error("REGISTRATION_CODE_INVALID"), remainingAttempts });
     }
     req['registeringUser'] = verifyinguser;
     next(); //CONTINUES BELOW<!!!>
@@ -187,7 +187,7 @@ router.post("/:id/code",  async (req, res) => {
                   'You can now login and enjoy the full functionalities of the Explorer!'
         };
         mailProvider.sendMail(newuser.email, mailOptions.subject, mailOptions.text);
-        return res.location(API_V + '/authenticatedUsers/' + user._id).status(201).send();
+        return res.location(API_V + '/authenticatedUsers/' + user._id).status(201).json({ success: true });
     }catch(err){
         return res.status(500).json({ error: { message: err } });
     }

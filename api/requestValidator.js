@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const error = require('../enums/errorCodes.cjs.js');
 
-const LOG_MODE = 2; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
+const LOG_MODE = 0; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
 
 const requestValidator = function(req, res, next) {
 	let token = req.query.token || req.headers['x-access-token'];

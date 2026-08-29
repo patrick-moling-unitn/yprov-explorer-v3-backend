@@ -68,8 +68,8 @@ router.post("/",  async (req, res) => {
             }else{  //IF THE VERIFICATION CODE IS VALID CHECK THE PASSWORD AND RETURN HIS USER ID
                 bcrypt.compare(req.body.password, registeringUser.passwordHash, function (err, result) {
                     if (result == true){
-                        const secret = verificationCode.secret, expireDate = verificationCode.expireDate;
-                        res.status(200).json({ id: registeringUser._id, verificationCode: { secret, expireDate }});
+                        const secret = verificationCode.secret, expireDate = verificationCode.expireDate, length = verificationCode.code.length;
+                        res.status(200).json({ id: registeringUser._id, verificationCode: { secret, expireDate, length }});
                     }
                     else
                         res.status(400).json({ error: error("WRONG_PASSWORD") });
@@ -113,8 +113,9 @@ router.post("/",  async (req, res) => {
         mailProvider.sendMail(req.body.email, mailOptions.subject, mailOptions.text);
         try{
             await reguser.save();
+            const length = VERIFICATION_CODE_LENGTH;
             res.location(API_V + '/registeringUsers/' + reguser._id).status(201).json(
-                {id: reguser._id, verificationCode: { secret, expireDate }});
+                {id: reguser._id, verificationCode: { secret, expireDate, length }});
         }catch(err){
             return res.status(500).json({ error: { message: err } });
         }

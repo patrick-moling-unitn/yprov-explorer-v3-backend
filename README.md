@@ -8,3 +8,10 @@ db.authenticatedusers.updateOne(
   { email: "target.admin@gmail.com" },
   { $set: { administrator: true } }
 )
+
+To set new superAdmin variable
+
+db.authenticatedusers.updateMany(
+  { superAdministrator: { $exists: false } },
+  { $set: { superAdministrator: false } }
+)

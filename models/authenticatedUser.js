@@ -5,7 +5,8 @@ const Schema = mongoose.Schema;
 module.exports = mongoose.model('AuthenticatedUser', new Schema({ 
     passwordHash: String,
     email: {type: String, lowercase: true, unique: true},
-    banned: Boolean,
-    administrator: Boolean,
+    banned: {type: Boolean, default: false},
+    administrator: {type: Boolean, default: false},
+    superAdministrator: {type: Boolean, default: false},
     lastLogin: Date
 }));

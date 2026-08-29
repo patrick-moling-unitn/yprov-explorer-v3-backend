@@ -20,6 +20,7 @@ app.delete(API_V+"/authenticatedUsers", requestValidator) //Devi essere amminist
 app.put(API_V+"/authenticatedUsers", requestValidator) //Devi essere amministratore per bandire gli utenti
 app.put(API_V+"/authenticatedUsers/:id", requestValidator) //Devi essere amministratore per bandire gli utenti per id
 app.delete(API_V+"/authenticatedUsers/:id", requestValidator) //Devi essere amministratore per eliminare un utente
+app.delete(API_V+"/authenticatedUsers/", requestValidator) //Devi essere amministratore per eliminare più un utenti
 
 app.get(API_V+"/registeringUsers/", requestValidator) //Devi essere amministratore per ottenere tutti gli utenti in registrazione
 app.delete(API_V+"/registeringUsers/", requestValidator) //Devi essere amministratore per cancellare tutti gli utenti in registrazione

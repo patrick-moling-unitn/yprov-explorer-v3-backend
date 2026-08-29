@@ -14,4 +14,4 @@ module.exports = mongoose.model('RegisteringUser', new Schema({
         },
         secret: String
     }
-}, {timestamps: true}));
+}));

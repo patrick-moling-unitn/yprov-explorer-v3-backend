@@ -22,6 +22,7 @@ const errorCodes = Object.freeze([
     "NOT_FOUND",
     "EMAIL_CHOSEN_NOT_VALID",
     "REGISTRATION_CODE_MAX_ATTEMPTS_REACHED",
+    "AUTHENTICATED_USER_DELETED",
 
     //"ADD_NEW_ERROR_HERE",
 ]);

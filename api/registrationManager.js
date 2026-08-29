@@ -20,6 +20,10 @@ const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
 
 const API_V = process.env.API_VERSION;
 
+function isAdmin(user){
+    return user.administrator || user.superAdministrator;
+}
+
 /**
  * RELATIVE PATH)
  *  .../registratingUsers/
@@ -30,9 +34,18 @@ const API_V = process.env.API_VERSION;
  *  usersList: the list of all registrating users
  */
 router.get("/", async (req, res) => {
-    if (req.loggedUser.administrator == true){
-        if (LOG_MODE >= 1) console.log("Get all registering user request!")
-        let usersList = await RegisteringUser.find({});
+    if (isAdmin(req.loggedUser)){
+        if (LOG_MODE >= 1) console.log("Registering users get request!")
+            
+        let usersList; 
+        
+        if (req.query.type == "invalid") 
+            usersList = await RegisteringUser.find({ "verificationCode.expireDate": { $lt: new Date() } });
+        else if (req.query.type == "all") 
+            usersList = await RegisteringUser.find({});
+        else
+            return res.status(400).json({ error: error("MISSING_QUERY_PARAMETERS") });
+
         usersList = usersList.map((user) => {
             return {
                 self: API_V + '/registeringUsers/' + user._id,
@@ -58,7 +71,7 @@ router.get("/", async (req, res) => {
  *  id: the identifier of the registering user used by the client for the confirmation
  */
 router.post("/",  async (req, res) => {
-    if(req.body.email || req.body.password){ 
+    if(req.body.email && req.body.password){ 
         registeringUser = await RegisteringUser.findOne({ email: req.body.email.toLowerCase()});
         let verificationCode = registeringUser ? registeringUser.verificationCode : null;
         if (verificationCode){ //IF USER IS ALREADY VERIFYING
@@ -173,9 +186,7 @@ router.post("/:id/code",  async (req, res) => {
     const newuser = req['registeringUser'];
 	let user = new AuthenticatedUser({
         email: newuser.email,
-        administrator: false,
         lastLogin: new Date(),
-        banned: false,
         passwordHash: newuser.passwordHash
     });
     await RegisteringUser.deleteOne({_id: req.params.id});
@@ -204,12 +215,12 @@ router.post("/:id/code",  async (req, res) => {
  *  id: the user identifier of the account you want to delete
  */
 router.delete('/:id', async (req, res, next) => {
-    if (req.loggedUser && req.loggedUser.administrator == true){
+    if (isAdmin(req.loggedUser)){
         await RegisteringUser.deleteOne({ _id: req.params.id });
         if (LOG_MODE >= 1) console.log('Registering user removed!');
         res.status(204).send();
     }else
-        next(); //CONTINUES BELOW<!!!>
+		return res.status(401).json({ error: error("UNAUTHORIZED") })
 });
 
 router.delete('/:id/secret', async (req, res) => {
@@ -229,9 +240,15 @@ router.delete('/:id/secret', async (req, res) => {
  *  delete all users carrying a registration process
  */
 router.delete('/', async (req, res) => {
-    if (req.loggedUser.administrator == true){
-        await RegisteringUser.deleteMany({})
-        if (LOG_MODE >= 1) console.log('All registering users removed!');
+    if (isAdmin(req.loggedUser)){
+        if (LOG_MODE >= 1) console.log('Registering users delete request!');
+        if (req.query.type == "invalid")
+            await RegisteringUser.deleteMany({ "verificationCode.expireDate": { $lt: new Date() } });
+        else if (req.query.type == "all")
+            await RegisteringUser.deleteMany();
+        else 
+            return res.status(400).json({ error: error("MISSING_QUERY_PARAMETERS") });
+            
         res.status(204).send();
     }else
 		return res.status(401).json({ error: error("UNAUTHORIZED") })

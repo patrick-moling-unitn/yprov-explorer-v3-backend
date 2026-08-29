@@ -13,6 +13,13 @@ const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
 
 const API_V = process.env.API_VERSION;
 
+function isAdmin(user){
+    return user.administrator || user.superAdministrator;
+}
+function isSuperAdmin(user){
+    return user.superAdministrator;
+}
+
 /**
  * RELATIVE PATH)
  *  .../authenticatedUsers/
@@ -36,17 +43,14 @@ const API_V = process.env.API_VERSION;
  */
 router.get("/", async (req, res, next) => {
     if(req.query.type == "all"){
-        if (req.loggedUser.administrator != true)
+        if (!isAdmin(req.loggedUser))
             return res.status(401).json({ error: error("UNAUTHORIZED") });
         if (LOG_MODE >= 1) console.log("Get all authenticated users request!")
-        const {administrator, banned, email, lastReportDate, points} = req.query;
+        const { administrator, banned, email } = req.query;
         let query = {};
-        query.email = { $regex: email};
-
+        if (email !== '') query.email = { $regex: email};
         if (banned !== '') query.banned = banned;
         if (administrator !== '') query.administrator = administrator;
-        if (lastReportDate !== '') query.lastReportDate = lastReportDate;
-        if (points !== '') query.points = Number(points);
 
         let userList = await AuthenticatedUser.find(query);
             userList = userList.map((user) => {
@@ -54,7 +58,9 @@ router.get("/", async (req, res, next) => {
                 self: API_V + '/authenticatedUsers/' + user._id,
                 email: user.email,
                 banned: user.banned,
-                administrator: user.administrator
+                administrator: isAdmin(user),
+                superAdministrator: user.superAdministrator,
+                lastLogin: user.lastLogin
             };
         });
         res.status(200).json(userList);
@@ -72,11 +78,14 @@ router.get("/", async (req, res) => {
     if(req.query.type == "personal"){
         if (LOG_MODE >= 1) console.log("Get user request!")
         let user = await AuthenticatedUser.findOne({_id:req.loggedUser.id});
+        if (!user) return res.status(400).json({ error: error("AUTHENTICATED_USER_DELETED") })
         user = {
             self: API_V + '/authenticatedUsers/' + user._id,
             email: user.email,
             banned: user.banned,
-            administrator: user.administrator
+            administrator: isAdmin(user),
+            superAdministrator: isSuperAdmin(user),
+            lastLogin: user.lastLogin
         }
         res.status(200).json(user);
     }else //req.query.type != "personal"
@@ -98,21 +107,55 @@ router.get("/", async (req, res) => {
  * SUCCESSFUL RETURNS)
  *  authenticatedUser: the edited user
  */
-router.put("/:id", async (req, res) => {
+router.put("/", async (req, res) => {
     if (LOG_MODE >= 1) console.log("Ban/Unban and Promote/Demote authenticated user request!")
-    if (req.loggedUser.administrator == true){
+    if (isAdmin(req.loggedUser)){
+        let idList = req.body.users;
+        if (idList){
+            const superAdmin = isSuperAdmin(req.loggedUser);
+            for (const id of idList){
+                try{
+                    authenticatedUser = superAdmin ? await AuthenticatedUser.findOne({superAdministrator: false, _id: id}) : 
+                        await AuthenticatedUser.findOne({superAdministrator: false, administrator: false, _id: id});
+                }catch(err){
+                    return res.status(400).json({ error: error("ID_NOT_FOUND") })
+                }
+                if (!authenticatedUser) continue;
+                if(req.body.banned !== undefined)
+                    authenticatedUser.banned = req.body.banned;
+                if(req.body.administrator !== undefined)
+                    authenticatedUser.administrator = req.body.administrator;
+                try{
+                    await authenticatedUser.save();
+                }catch(err){
+                    return res.status(500).json({ error: { message: err } });
+                }
+            }
+            res.status(204).send();
+        }else
+		    return res.status(401).json({ error: error("WRONG_DATA") })
+    }else
+		return res.status(401).json({ error: error("UNAUTHORIZED") })
+});
+
+router.put("/:id", async (req, res) => {
+    if (LOG_MODE >= 1) console.log("Ban/Unban and Promote/Demote multiple authenticated user request!")
+    if (isAdmin(req.loggedUser)){
         let authenticatedUser;
         try{
-            authenticatedUser = await AuthenticatedUser.findOne({_id: req.params.id});
+            const superAdmin = isSuperAdmin(req.loggedUser);
+            authenticatedUser = superAdmin ? await AuthenticatedUser.find({superAdministrator: false, _id: req.params.id}) : 
+                await AuthenticatedUser.find({superAdministrator: false, administrator: false, _id: req.params.id});
         }catch(err){
             return res.status(400).json({ error: error("ID_NOT_FOUND") })
         }
-        if(req.body.editBan)
-            authenticatedUser.banned = !authenticatedUser.banned;
-        if(req.body.editAdmin)
-            authenticatedUser.administrator = !authenticatedUser.administrator;
+        if (!authenticatedUser) res.status(400).json({ error: error("ID_NOT_FOUND") });
+        if(req.body.banned)
+            authenticatedUser.banned = req.body.banned;
+        if(req.body.administrator)
+            authenticatedUser.administrator = req.body.administrator;
         try{
-            authenticatedUser.save();
+            await authenticatedUser.save();
         }catch(err){
             return res.status(500).json({ error: { message: err } });
         }
@@ -147,14 +190,16 @@ router.post("/",  async (req, res) => {
     if(authenticatedUser.banned)
         return res.status(400).json({ error: error("AUTHENTICATED_USER_BANNED") })
 
-    bcrypt.compare(req.body.password, authenticatedUser.passwordHash, function(err, result) {
+    bcrypt.compare(req.body.password, authenticatedUser.passwordHash, async function(err, result) {
         if (result == true){
             let options = { expiresIn: JWT_TOKEN_DURATION }
+            const superAdministrator = authenticatedUser.superAdministrator;
             let payload = {id: authenticatedUser._id, email: authenticatedUser.email, 
-                administrator: authenticatedUser.administrator, expiresIn: options.expiresIn}
+                administrator: authenticatedUser.administrator || superAdministrator, 
+                superAdministrator, expiresIn: options.expiresIn}
             authenticatedUser.lastLogin = new Date();
             try{
-                authenticatedUser.save();
+                await authenticatedUser.save();
             }catch(err){
                 return res.status(500).json({ error: { message: err } });
             }
@@ -176,14 +221,38 @@ router.post("/",  async (req, res) => {
  *  id: identifier of the user whose account you want to delete
  */
 router.delete('/:id', async (req, res) => {
-        if (LOG_MODE >= 1) console.log("Delete authenticated user request!")
-    if (req.loggedUser.administrator == true || req.loggedUser.id == req.params.id ){
-        await AuthenticatedUser.deleteOne({_id: req.params.id})
+    if (LOG_MODE >= 1) console.log("Delete authenticated user request!")
+    const ownAccount = req.loggedUser.id == req.params.id;
+    if (ownAccount || isSuperAdmin(req.loggedUser)){
+        if (ownAccount) await AuthenticatedUser.deleteOne({_id: req.params.id})
+        else await AuthenticatedUser.deleteOne({superAdministrator: false, administrator: false, _id: req.params.id})
+
         if (LOG_MODE >= 2) console.log("Authenticated user deleted!")
         res.status(204).send();
     }else
 		return res.status(401).json({ error: error("UNAUTHORIZED") })
 });
 
+router.delete('/', async (req, res) => {
+    if (LOG_MODE >= 1) console.log("Delete multiple authenticated user request!")
+    if (isSuperAdmin(req.loggedUser)){
+        let idList = req.body.users;
+        console.log(idList);
+        if (idList){
+            for (const id of idList){
+                try{
+                    await AuthenticatedUser.deleteOne({superAdministrator: false, _id: id});
+                }catch(err){
+                    return res.status(400).json({ error: error("ID_NOT_FOUND") })
+                }
+            }
+
+            if (LOG_MODE >= 2) console.log("Authenticated users deleted!")
+            res.status(204).send();
+        }else
+		    return res.status(401).json({ error: error("WRONG_DATA") })
+    }else
+		return res.status(401).json({ error: error("UNAUTHORIZED") })
+});
 
 module.exports = router;

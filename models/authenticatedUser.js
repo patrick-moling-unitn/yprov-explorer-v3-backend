@@ -6,7 +6,10 @@ module.exports = mongoose.model('AuthenticatedUser', new Schema({
     passwordHash: String,
     email: {type: String, lowercase: true, unique: true},
     banned: {type: Boolean, default: false},
-    administrator: {type: Boolean, default: false},
-    superAdministrator: {type: Boolean, default: false},
-    lastLogin: Date
+    role: {
+        type: String,
+        enum: ['User', 'Admin', 'SuperAdmin'],
+        default: 'User'
+    },
+    lastLogin: { type: Date, default: null }
 }));

@@ -21,7 +21,7 @@ const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
 const API_V = process.env.API_VERSION;
 
 function isAdmin(user){
-    return user.administrator || user.superAdministrator;
+    return user.role == 'Admin' || user.role == 'SuperAdmin';
 }
 
 /**
@@ -186,7 +186,6 @@ router.post("/:id/code",  async (req, res) => {
     const newuser = req['registeringUser'];
 	let user = new AuthenticatedUser({
         email: newuser.email,
-        lastLogin: new Date(),
         passwordHash: newuser.passwordHash
     });
     await RegisteringUser.deleteOne({_id: req.params.id});

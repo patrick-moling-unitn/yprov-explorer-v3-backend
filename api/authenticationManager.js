@@ -7,6 +7,7 @@ const error = require('../enums/errorCodes.cjs.js');
 const bcrypt = require('bcrypt');
 
 const jwt = require('jsonwebtoken');
+const authenticatedUser = require('../models/authenticatedUser');
 const JWT_TOKEN_DURATION = 1 * (24 * 60 * 60); //1 day
 
 const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
@@ -14,10 +15,10 @@ const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
 const API_V = process.env.API_VERSION;
 
 function isAdmin(user){
-    return user.administrator || user.superAdministrator;
+    return user.role == 'Admin' || user.role == 'SuperAdmin';
 }
 function isSuperAdmin(user){
-    return user.superAdministrator;
+    return user.role == 'SuperAdmin';
 }
 
 /**
@@ -58,8 +59,7 @@ router.get("/", async (req, res, next) => {
                 self: API_V + '/authenticatedUsers/' + user._id,
                 email: user.email,
                 banned: user.banned,
-                administrator: isAdmin(user),
-                superAdministrator: user.superAdministrator,
+                role: user.role,
                 lastLogin: user.lastLogin
             };
         });
@@ -83,8 +83,7 @@ router.get("/", async (req, res) => {
             self: API_V + '/authenticatedUsers/' + user._id,
             email: user.email,
             banned: user.banned,
-            administrator: isAdmin(user),
-            superAdministrator: isSuperAdmin(user),
+            role: user.role,
             lastLogin: user.lastLogin
         }
         res.status(200).json(user);
@@ -114,17 +113,24 @@ router.put("/", async (req, res) => {
         if (idList){
             const superAdmin = isSuperAdmin(req.loggedUser);
             for (const id of idList){
+                let authenticatedUser;
                 try{
-                    authenticatedUser = superAdmin ? await AuthenticatedUser.findOne({superAdministrator: false, _id: id}) : 
-                        await AuthenticatedUser.findOne({superAdministrator: false, administrator: false, _id: id});
+                    authenticatedUser = superAdmin ? await AuthenticatedUser.findOne({role: { $ne: 'SuperAdmin' }, _id: id}) : 
+                        await AuthenticatedUser.findOne({role: 'User', _id: id});
                 }catch(err){
+                    console.error(err);
                     return res.status(400).json({ error: error("ID_NOT_FOUND") })
                 }
+                console.log(authenticatedUser);
                 if (!authenticatedUser) continue;
                 if(req.body.banned !== undefined)
                     authenticatedUser.banned = req.body.banned;
-                if(req.body.administrator !== undefined)
-                    authenticatedUser.administrator = req.body.administrator;
+                if(req.body.role !== undefined){
+                    if (req.body.role !== 'SuperAdmin')
+                        authenticatedUser.role = req.body.role;
+                    else
+		                return res.status(401).json({ error: error("UNAUTHORIZED") });
+                }
                 try{
                     await authenticatedUser.save();
                 }catch(err){
@@ -144,16 +150,20 @@ router.put("/:id", async (req, res) => {
         let authenticatedUser;
         try{
             const superAdmin = isSuperAdmin(req.loggedUser);
-            authenticatedUser = superAdmin ? await AuthenticatedUser.find({superAdministrator: false, _id: req.params.id}) : 
-                await AuthenticatedUser.find({superAdministrator: false, administrator: false, _id: req.params.id});
+            authenticatedUser = superAdmin ? await AuthenticatedUser.find({role: { $ne: 'SuperAdmin' }, _id: req.params.id}) : 
+                await AuthenticatedUser.find({role: 'User', _id: req.params.id});
         }catch(err){
             return res.status(400).json({ error: error("ID_NOT_FOUND") })
         }
         if (!authenticatedUser) res.status(400).json({ error: error("ID_NOT_FOUND") });
-        if(req.body.banned)
+        if(req.body.banned != undefined)
             authenticatedUser.banned = req.body.banned;
-        if(req.body.administrator)
-            authenticatedUser.administrator = req.body.administrator;
+        if(req.body.role !== undefined){
+            if (req.body.role !== 'SuperAdmin')
+                authenticatedUser.role = req.body.role;
+            else
+                return res.status(401).json({ error: error("UNAUTHORIZED") });
+        }
         try{
             await authenticatedUser.save();
         }catch(err){
@@ -193,10 +203,8 @@ router.post("/",  async (req, res) => {
     bcrypt.compare(req.body.password, authenticatedUser.passwordHash, async function(err, result) {
         if (result == true){
             let options = { expiresIn: JWT_TOKEN_DURATION }
-            const superAdministrator = authenticatedUser.superAdministrator;
-            let payload = {id: authenticatedUser._id, email: authenticatedUser.email, 
-                administrator: authenticatedUser.administrator || superAdministrator, 
-                superAdministrator, expiresIn: options.expiresIn}
+            let payload = { id: authenticatedUser._id, email: 
+                authenticatedUser.email, role: authenticatedUser.role}
             authenticatedUser.lastLogin = new Date();
             try{
                 await authenticatedUser.save();
@@ -225,7 +233,7 @@ router.delete('/:id', async (req, res) => {
     const ownAccount = req.loggedUser.id == req.params.id;
     if (ownAccount || isSuperAdmin(req.loggedUser)){
         if (ownAccount) await AuthenticatedUser.deleteOne({_id: req.params.id})
-        else await AuthenticatedUser.deleteOne({superAdministrator: false, administrator: false, _id: req.params.id})
+        else await AuthenticatedUser.deleteOne({role: { $ne: 'SuperAdmin' }, _id: req.params.id})
 
         if (LOG_MODE >= 2) console.log("Authenticated user deleted!")
         res.status(204).send();
@@ -241,7 +249,7 @@ router.delete('/', async (req, res) => {
         if (idList){
             for (const id of idList){
                 try{
-                    await AuthenticatedUser.deleteOne({superAdministrator: false, _id: id});
+                    await AuthenticatedUser.deleteOne({role: { $ne: 'SuperAdmin' }, _id: id});
                 }catch(err){
                     return res.status(400).json({ error: error("ID_NOT_FOUND") })
                 }

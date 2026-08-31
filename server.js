@@ -17,10 +17,9 @@ const PORT = process.env.PORT;
 
 app.get(API_V+"/authenticatedUsers", requestValidator) //Devi essere amministratore per ottenere gli utenti
 app.delete(API_V+"/authenticatedUsers", requestValidator) //Devi essere amministratore per eliminare gli utenti
-app.put(API_V+"/authenticatedUsers", requestValidator) //Devi essere amministratore per bandire gli utenti
-app.put(API_V+"/authenticatedUsers/:id", requestValidator) //Devi essere amministratore per bandire gli utenti per id
+app.put(API_V+"/authenticatedUsers", requestValidator) //Devi essere autenticato per modificare dati personali, admin per dati di tutti
 app.delete(API_V+"/authenticatedUsers/:id", requestValidator) //Devi essere amministratore per eliminare un utente
-app.delete(API_V+"/authenticatedUsers/", requestValidator) //Devi essere amministratore per eliminare più un utenti
+app.delete(API_V+"/authenticatedUsers/", requestValidator) //Devi essere autenticato per eliminare dati personali, admin per dati di tutti
 
 app.get(API_V+"/registeringUsers/", requestValidator) //Devi essere amministratore per ottenere tutti gli utenti in registrazione
 app.delete(API_V+"/registeringUsers/", requestValidator) //Devi essere amministratore per cancellare tutti gli utenti in registrazione

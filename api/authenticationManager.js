@@ -7,8 +7,10 @@ const error = require('../enums/errorCodes.cjs.js');
 const bcrypt = require('bcrypt');
 
 const jwt = require('jsonwebtoken');
-const authenticatedUser = require('../models/authenticatedUser');
 const JWT_TOKEN_DURATION = 1 * (24 * 60 * 60); //1 day
+
+const MIN_USER_PASSWORD_LENGTH = Number(process.env.MIN_PASSWORD_LENGTH);
+const SALT_ROUNDS = Number(process.env.HASHING_SALT_ROUNDS);
 
 const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
 
@@ -84,7 +86,7 @@ router.get("/", async (req, res) => {
             email: user.email,
             banned: user.banned,
             role: user.role,
-            lastLogin: user.lastLogin
+            settings: user.settings
         }
         res.status(200).json(user);
     }else //req.query.type != "personal"
@@ -106,10 +108,12 @@ router.get("/", async (req, res) => {
  * SUCCESSFUL RETURNS)
  *  authenticatedUser: the edited user
  */
-router.put("/", async (req, res) => {
+router.put("/", async (req, res, next) => {
     if (LOG_MODE >= 1) console.log("Ban/Unban and Promote/Demote authenticated user request!")
-    if (isAdmin(req.loggedUser)){
-        let idList = req.body.users;
+    if (req.query.type == "all"){
+        if (!isAdmin(req.loggedUser))
+		    return res.status(401).json({ error: error("UNAUTHORIZED") })
+        const idList = req.body.users;
         if (idList){
             const superAdmin = isSuperAdmin(req.loggedUser);
             for (const id of idList){
@@ -134,45 +138,61 @@ router.put("/", async (req, res) => {
                 try{
                     await authenticatedUser.save();
                 }catch(err){
-                    return res.status(500).json({ error: { message: err } });
+                    return res.status(500).json({ err });
                 }
             }
             res.status(204).send();
         }else
 		    return res.status(401).json({ error: error("WRONG_DATA") })
-    }else
-		return res.status(401).json({ error: error("UNAUTHORIZED") })
+    }else //req.query.type != "all"
+        next()
 });
 
-router.put("/:id", async (req, res) => {
-    if (LOG_MODE >= 1) console.log("Ban/Unban and Promote/Demote multiple authenticated user request!")
-    if (isAdmin(req.loggedUser)){
+router.put("/", async (req, res) => {
+    if (LOG_MODE >= 1) console.log("Change user data request")
+    if (req.query.type == "personal"){
         let authenticatedUser;
         try{
-            const superAdmin = isSuperAdmin(req.loggedUser);
-            authenticatedUser = superAdmin ? await AuthenticatedUser.find({role: { $ne: 'SuperAdmin' }, _id: req.params.id}) : 
-                await AuthenticatedUser.find({role: 'User', _id: req.params.id});
+            authenticatedUser = await AuthenticatedUser.findOne({_id: req.loggedUser.id});
         }catch(err){
             return res.status(400).json({ error: error("ID_NOT_FOUND") })
         }
         if (!authenticatedUser) res.status(400).json({ error: error("ID_NOT_FOUND") });
-        if(req.body.banned != undefined)
-            authenticatedUser.banned = req.body.banned;
-        if(req.body.role !== undefined){
-            if (req.body.role !== 'SuperAdmin')
-                authenticatedUser.role = req.body.role;
-            else
-                return res.status(401).json({ error: error("UNAUTHORIZED") });
-        }
-        try{
-            await authenticatedUser.save();
-        }catch(err){
-            return res.status(500).json({ error: { message: err } });
+        
+        if(req.body.saveLogin != undefined){
+            authenticatedUser.settings.saveLogin = req.body.saveLogin;
+            if (!req.body.saveLogin) authenticatedUser.lastLogin = null;
+            else authenticatedUser.lastLogin = new Date();
+            
+            try{
+                await authenticatedUser.save();
+            }catch(err){
+                return res.status(500).json({ err });
+            }
+
+            res.status(200).json(authenticatedUser);
         }
 
-        res.status(200).json(authenticatedUser);
-    }else
-		return res.status(401).json({ error: error("UNAUTHORIZED") })
+        //This must be the latest method executing to avoid HTTP headers duplication!
+        if(req.body.oldPassword != undefined && req.body.newPassword != undefined){
+            if (req.body.newPassword.length < MIN_USER_PASSWORD_LENGTH)
+                return res.status(400).json({ error: error("REGISTRATING_USER_INVALID_PASSWORD"), minPasswordLength: MIN_USER_PASSWORD_LENGTH });
+            bcrypt.compare(req.body.oldPassword, authenticatedUser.passwordHash, async function(err, result) {
+                if (result == true){
+                    authenticatedUser.passwordHash = await bcrypt.hash(req.body.newPassword, SALT_ROUNDS);
+                    try{
+                        await authenticatedUser.save();
+                    }catch(err){
+                        return res.status(500).json({ err });
+                    }
+                    res.status(204).send();
+                }
+                else
+                    res.status(400).json({ error: error("WRONG_PASSWORD") })
+            });
+        }
+    }else //req.query.type != "personal"
+        return res.status(400).json({ error: error("MISSING_QUERY_PARAMETER")} )
 });
 
 /**
@@ -205,11 +225,15 @@ router.post("/",  async (req, res) => {
             let options = { expiresIn: JWT_TOKEN_DURATION }
             let payload = { id: authenticatedUser._id, email: 
                 authenticatedUser.email, role: authenticatedUser.role}
-            authenticatedUser.lastLogin = new Date();
-            try{
-                await authenticatedUser.save();
-            }catch(err){
-                return res.status(500).json({ error: { message: err } });
+
+            const auditLogin = authenticatedUser.settings.saveLogin;
+            if (auditLogin || (!auditLogin && authenticatedUser.lastLogin != null)){
+                authenticatedUser.lastLogin = auditLogin ? new Date() : null;
+                try{
+                    await authenticatedUser.save();
+                }catch(err){
+                    return res.status(500).json({ err });
+                }
             }
             res.status(200).json({ authToken: jwt.sign(payload, process.env.JWT_SECRET, options) });
         }
@@ -230,20 +254,23 @@ router.post("/",  async (req, res) => {
  */
 router.delete('/:id', async (req, res) => {
     if (LOG_MODE >= 1) console.log("Delete authenticated user request!")
-    const ownAccount = req.loggedUser.id == req.params.id;
-    if (ownAccount || isSuperAdmin(req.loggedUser)){
-        if (ownAccount) await AuthenticatedUser.deleteOne({_id: req.params.id})
-        else await AuthenticatedUser.deleteOne({role: { $ne: 'SuperAdmin' }, _id: req.params.id})
-
+    if (isSuperAdmin(req.loggedUser)){
+        try{
+            await AuthenticatedUser.deleteOne({role: { $ne: 'SuperAdmin' }, _id: req.params.id})
+        }catch(err){
+            return res.status(400).json({ error: error("ID_NOT_FOUND") })
+        }
         if (LOG_MODE >= 2) console.log("Authenticated user deleted!")
         res.status(204).send();
     }else
 		return res.status(401).json({ error: error("UNAUTHORIZED") })
 });
 
-router.delete('/', async (req, res) => {
+router.delete('/', async (req, res, next) => {
     if (LOG_MODE >= 1) console.log("Delete multiple authenticated user request!")
-    if (isSuperAdmin(req.loggedUser)){
+    if(req.query.type == "all"){
+        if (!isSuperAdmin(req.loggedUser))
+            return res.status(401).json({ error: error("UNAUTHORIZED") })
         let idList = req.body.users;
         console.log(idList);
         if (idList){
@@ -254,13 +281,28 @@ router.delete('/', async (req, res) => {
                     return res.status(400).json({ error: error("ID_NOT_FOUND") })
                 }
             }
-
             if (LOG_MODE >= 2) console.log("Authenticated users deleted!")
             res.status(204).send();
         }else
 		    return res.status(401).json({ error: error("WRONG_DATA") })
-    }else
-		return res.status(401).json({ error: error("UNAUTHORIZED") })
+    }
+    else //req.query.type != "all"
+        next()
+});
+
+router.delete('/', async (req, res) => {
+    if (LOG_MODE >= 1) console.log("Delete multiple authenticated user request!")
+    if(req.query.type == "personal"){
+        try{
+            await AuthenticatedUser.deleteOne({_id: req.loggedUser.id});
+        }catch(err){
+            return res.status(400).json({ error: error("ID_NOT_FOUND") })
+        }
+        if (LOG_MODE >= 2) console.log("Authenticated user deleted!")
+        res.status(204).send();
+    }
+    else //req.query.type != "personal"
+        return res.status(400).json({ error: error("MISSING_QUERY_PARAMETER")} )
 });
 
 module.exports = router;

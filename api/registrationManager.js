@@ -13,7 +13,7 @@ const EMAIL_CODE_EXPIRATION_TIME_MIN = 15;
 const VERIFICATION_CODE_LENGTH = 6; //1 chance of guessing it out of 200.000 with 5 attempts
 const MAX_VERIFICATION_ATTEMPTS = 5;
 
-const MIN_USER_PASSWORD_LENGTH = 8;
+const MIN_USER_PASSWORD_LENGTH = Number(process.env.MIN_PASSWORD_LENGTH);
 const SALT_ROUNDS = Number(process.env.HASHING_SALT_ROUNDS);
 
 const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
@@ -130,7 +130,7 @@ router.post("/",  async (req, res) => {
             res.location(API_V + '/registeringUsers/' + reguser._id).status(201).json(
                 {id: reguser._id, verificationCode: { secret, expireDate, length }});
         }catch(err){
-            return res.status(500).json({ error: { message: err } });
+            return res.status(500).json({ err });
         }
     }else
         return res.status(400).json({ error: error("MISSING_QUERY_PARAMETERS") });
@@ -165,7 +165,7 @@ router.post("/:id/code",  async (req, res, next) => {
             try{
                 await verifyinguser.save();
             }catch(err){
-                return res.status(500).json({ error: { message: err } });
+                return res.status(500).json({ err });
             }
         }
         const remainingAttempts = MAX_VERIFICATION_ATTEMPTS - verifyinguser.verificationCode.attempts;
@@ -200,7 +200,7 @@ router.post("/:id/code",  async (req, res) => {
         mailProvider.sendMail(newuser.email, mailOptions.subject, mailOptions.text);
         return res.location(API_V + '/authenticatedUsers/' + user._id).status(201).json({ success: true });
     }catch(err){
-        return res.status(500).json({ error: { message: err } });
+        return res.status(500).json({ err });
     }
 });
 

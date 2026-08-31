@@ -11,5 +11,8 @@ module.exports = mongoose.model('AuthenticatedUser', new Schema({
         enum: ['User', 'Admin', 'SuperAdmin'],
         default: 'User'
     },
-    lastLogin: { type: Date, default: null }
+    lastLogin: { type: Date, default: null },
+    settings: {
+        saveLogin: {type: Boolean, default: true}
+    }
 }));

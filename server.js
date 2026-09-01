@@ -9,7 +9,10 @@ const requestValidator = require('./api/requestValidator');
 
 const app = express()
 
-app.use(cors())
+app.use(cors({
+    origin: 'http://localhost:5173',
+    credentials: true
+}));
 app.use(express.json())
 
 const API_V = process.env.API_VERSION;
@@ -20,6 +23,7 @@ app.delete(API_V+"/authenticatedUsers", requestValidator) //Devi essere amminist
 app.put(API_V+"/authenticatedUsers", requestValidator) //Devi essere autenticato per modificare dati personali, admin per dati di tutti
 app.delete(API_V+"/authenticatedUsers/:id", requestValidator) //Devi essere amministratore per eliminare un utente
 app.delete(API_V+"/authenticatedUsers/", requestValidator) //Devi essere autenticato per eliminare dati personali, admin per dati di tutti
+app.delete(API_V+"/authenticatedUsers/refresh", requestValidator) //Devi essere autenticato per eliminare dati personali
 
 app.get(API_V+"/registeringUsers/", requestValidator) //Devi essere amministratore per ottenere tutti gli utenti in registrazione
 app.delete(API_V+"/registeringUsers/", requestValidator) //Devi essere amministratore per cancellare tutti gli utenti in registrazione

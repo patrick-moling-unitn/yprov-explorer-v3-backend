@@ -1,13 +1,17 @@
+const cookieParser = require('cookie-parser');
 const express = require('express');
 const router = express.Router();
 
 const AuthenticatedUser = require('../models/authenticatedUser');
+const RefreshToken = require('../models/refreshToken.js');
 const error = require('../enums/errorCodes.cjs.js');
 
 const bcrypt = require('bcrypt');
+const crypto = require("crypto");
 
 const jwt = require('jsonwebtoken');
-const JWT_TOKEN_DURATION = 1 * (24 * 60 * 60); //1 day
+const JWT_TOKEN_DURATION = 10 * 60; //10 minutes
+const SESSION_DURATION = 7 * 24 * 60 * 60; //7 days
 
 const MIN_USER_PASSWORD_LENGTH = Number(process.env.MIN_PASSWORD_LENGTH);
 const SALT_ROUNDS = Number(process.env.HASHING_SALT_ROUNDS);
@@ -16,11 +20,38 @@ const LOG_MODE = 1; //0: NONE; 1: MINIMAL; 2: MEDIUM; 3: HIGH
 
 const API_V = process.env.API_VERSION;
 
+const REFRESH_TOKEN_HTTP_SETTINGS = {
+    httpOnly: true,
+    secure: false,
+    sameSite: 'strict'
+}
+const REFRESH_TOKEN_COOKIE_SETTINGS = {
+    ...REFRESH_TOKEN_HTTP_SETTINGS,
+    path: API_V+'/authenticatedUsers/refresh',
+    maxAge: SESSION_DURATION * 1000
+}
+
 function isAdmin(user){
     return user.role == 'Admin' || user.role == 'SuperAdmin';
 }
 function isSuperAdmin(user){
     return user.role == 'SuperAdmin';
+}
+
+function getJwtData(user){
+    const options = { expiresIn: JWT_TOKEN_DURATION };
+    const payload = { id: user._id, email: user.email, role: user.role};
+    return { options, payload };
+}
+function generateAuthToken(user){
+    const { options, payload } = getJwtData(user);
+    return jwt.sign(payload, process.env.JWT_SECRET, options);
+}
+
+function generateRefreshToken(){
+    const refreshToken = crypto.randomBytes(32).toString("base64url");
+    const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+    return { refreshToken, tokenHash };
 }
 
 /**
@@ -62,9 +93,16 @@ router.get("/", async (req, res, next) => {
                 email: user.email,
                 banned: user.banned,
                 role: user.role,
-                lastLogin: user.lastLogin
+                lastLogin: user.lastLogin,
+                activeSessions: null
             };
         });
+        const currentDate = new Date();
+        for (let user of userList) {
+            const activeSessions = await RefreshToken.countDocuments(
+                    {userId: user.self.split("/").pop(), expireDate: { $gt: currentDate }});
+            user.activeSessions = activeSessions;
+        }
         res.status(200).json(userList);
     }else //req.query.type != "all"
         next()
@@ -80,17 +118,21 @@ router.get("/", async (req, res) => {
     if(req.query.type == "personal"){
         if (LOG_MODE >= 1) console.log("Get user request!")
         let user = await AuthenticatedUser.findOne({_id:req.loggedUser.id});
-        if (!user) return res.status(400).json({ error: error("AUTHENTICATED_USER_DELETED") })
+        if (!user) return res.status(400).json({ error: error("AUTHENTICATED_USER_DELETED") });
+        const currentDate = new Date();
         user = {
             self: API_V + '/authenticatedUsers/' + user._id,
             email: user.email,
             banned: user.banned,
             role: user.role,
-            settings: user.settings
+            settings: user.settings,
+            activeSessions: await RefreshToken.countDocuments(
+                {userId: user.id, expireDate: { $gt: currentDate }}),
+            cookies: await RefreshToken.find({userId: user.id}),
         }
         res.status(200).json(user);
     }else //req.query.type != "personal"
-        return res.status(400).json({ error: error("MISSING_QUERY_PARAMETER")} )
+        return res.status(400).json({ error: error("MISSING_QUERY_PARAMETER")} );
 });
 
 /**
@@ -222,24 +264,145 @@ router.post("/",  async (req, res) => {
 
     bcrypt.compare(req.body.password, authenticatedUser.passwordHash, async function(err, result) {
         if (result == true){
-            let options = { expiresIn: JWT_TOKEN_DURATION }
-            let payload = { id: authenticatedUser._id, email: 
-                authenticatedUser.email, role: authenticatedUser.role}
-
-            const auditLogin = authenticatedUser.settings.saveLogin;
-            if (auditLogin || (!auditLogin && authenticatedUser.lastLogin != null)){
-                authenticatedUser.lastLogin = auditLogin ? new Date() : null;
+            const auditLogin = authenticatedUser.settings.saveLogin, currentDate = new Date();
+            if (auditLogin) {
+                authenticatedUser.lastLogin = currentDate;
                 try{
                     await authenticatedUser.save();
                 }catch(err){
                     return res.status(500).json({ err });
                 }
             }
-            res.status(200).json({ authToken: jwt.sign(payload, process.env.JWT_SECRET, options) });
+            
+            const { refreshToken, tokenHash } = generateRefreshToken();
+            tokenEntry = new RefreshToken({
+                userId: authenticatedUser.id,
+                tokenHash,
+                expireDate: new Date(Date.now() + SESSION_DURATION * 1000)
+            });
+            try{
+                await tokenEntry.save();
+            }catch(err){
+                return res.status(500).json({ err });
+            }
+            res.cookie('refreshToken', refreshToken, REFRESH_TOKEN_COOKIE_SETTINGS);
+            res.status(200).json({ authToken: generateAuthToken(authenticatedUser) });
         }
         else
             res.status(400).json({ error: error("WRONG_PASSWORD") })
     });
+});
+
+router.post("/refresh", cookieParser(), async (req, res) => {
+    if (LOG_MODE >= 1) console.log("Authentication cookie refresh request!")
+    const refreshToken = req.cookies.refreshToken;
+    if (LOG_MODE >= 2) console.log("Token ", refreshToken);
+    if (!refreshToken) return res.status(401).json({ error: error("MISSING_TOKEN") });
+    const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+    let tokenEntry;
+    try{
+        tokenEntry = await RefreshToken.findOne({tokenHash: tokenHash});
+    }catch(err){
+        return res.status(500).json({ err });
+    }
+    if (tokenEntry){
+        const currentDate = new Date();
+        if (tokenEntry.rotated){
+            await RefreshToken.updateMany({userId: tokenEntry.userId}, {expireDate: currentDate});
+            return res.status(401).json({ error: error("TOKEN_REUSE_DETECTED") });
+        }
+        else if (tokenEntry.expireDate < currentDate){
+            return res.status(401).json({ error: error("INVALID_TOKEN") });
+        }
+
+        let authenticatedUser;
+        try {
+            authenticatedUser = await AuthenticatedUser.findOne({_id: tokenEntry.userId});
+        }catch {
+            return res.status(400).json({ error: error("WRONG_DATA") })
+        }
+        if(!authenticatedUser)
+            return res.status(400).json({ error: error("NO_MATCHING_AUTHENTICATED_USER_ID") })
+
+        const { refreshToken, tokenHash } = generateRefreshToken(),
+              expireDate = tokenEntry.expireDate;
+        tokenEntry.expireDate = currentDate;
+        tokenEntry.rotated = true;
+        try{
+            await tokenEntry.save();
+            await RefreshToken.create({ 
+                userId: tokenEntry.userId, 
+                tokenHash,
+                expireDate
+            });
+        }catch(err){
+            return res.status(500).json({ err });
+        }
+        res.cookie('refreshToken', refreshToken, REFRESH_TOKEN_COOKIE_SETTINGS);
+        res.status(200).json({ authToken: generateAuthToken(authenticatedUser) });
+    }else 
+        return res.status(401).json({ error: error("INVALID_TOKEN") });
+});
+
+router.delete("/refresh", cookieParser(), async (req, res, next) => {
+    if (req.query.type == "current"){
+        if (LOG_MODE >= 1) console.log("Authentication cookie delete request!")
+        const refreshToken = req.cookies.refreshToken;
+        if (LOG_MODE >= 2) console.log("Token ", refreshToken);
+        if (!refreshToken) return res.status(401).json({ error: error("MISSING_TOKEN") });
+        const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+        let tokenEntry;
+        try{
+            tokenEntry = await RefreshToken.findOne({tokenHash: tokenHash});
+        }catch(err){
+            return res.status(500).json({ err });
+        }
+        if (tokenEntry && req.loggedUser.id == tokenEntry.userId){
+            const currentDate = new Date();
+            if (tokenEntry.rotated){
+                await RefreshToken.updateMany({userId: tokenEntry.userId}, {expireDate: currentDate});
+                return res.status(401).json({ error: error("TOKEN_REUSE_DETECTED") });
+            }
+            else if (tokenEntry.expireDate < currentDate){
+                return res.status(401).json({ error: error("INVALID_TOKEN") });
+            }
+
+            tokenEntry.expireDate = currentDate;
+            try{
+                await tokenEntry.save();
+            }catch(err){
+                return res.status(500).json({ err });
+            }
+
+            res.clearCookie('refreshToken', REFRESH_TOKEN_HTTP_SETTINGS);
+            res.status(204).send();
+        }else 
+            return res.status(401).json({ error: error("INVALID_TOKEN") });
+    }else //req.query.type != "current"
+        next();
+});
+
+router.delete("/refresh", cookieParser(), async (req, res) => {
+    if (req.query.type == "all"){
+        if (LOG_MODE >= 1) console.log("Authentication all cookies delete request!")
+        const refreshToken = req.cookies.refreshToken;
+        if (LOG_MODE >= 2) console.log("Token ", refreshToken);
+        if (!refreshToken) return res.status(401).json({ error: error("MISSING_TOKEN") });
+        const tokenHash = crypto.createHash("sha256").update(refreshToken).digest("hex");
+        let tokenEntry;
+        try{
+            tokenEntry = await RefreshToken.findOne({tokenHash: tokenHash});
+        }catch(err){
+            return res.status(500).json({ err });
+        }
+        const currentDate = new Date(); 
+        if (tokenEntry && tokenEntry.expireDate > currentDate && req.loggedUser.id == tokenEntry.userId){
+            await RefreshToken.updateMany({userId: tokenEntry.userId}, {expireDate: currentDate});
+            res.status(204).send();
+        }else 
+            return res.status(401).json({ error: error("INVALID_TOKEN") });
+    }else //req.query.type != "all"
+        return res.status(400).json({ error: error("MISSING_QUERY_PARAMETER")} )
 });
 
 /**

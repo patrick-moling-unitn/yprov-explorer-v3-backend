@@ -359,13 +359,8 @@ router.delete("/refresh", cookieParser(), async (req, res, next) => {
         }
         if (tokenEntry && req.loggedUser.id == tokenEntry.userId){
             const currentDate = new Date();
-            if (tokenEntry.rotated){
-                await RefreshToken.updateMany({userId: tokenEntry.userId}, {expireDate: currentDate});
-                return res.status(401).json({ error: error("TOKEN_REUSE_DETECTED") });
-            }
-            else if (tokenEntry.expireDate < currentDate){
+            if (tokenEntry.expireDate < currentDate)
                 return res.status(401).json({ error: error("INVALID_TOKEN") });
-            }
 
             tokenEntry.expireDate = currentDate;
             try{
@@ -398,6 +393,7 @@ router.delete("/refresh", cookieParser(), async (req, res) => {
         const currentDate = new Date(); 
         if (tokenEntry && tokenEntry.expireDate > currentDate && req.loggedUser.id == tokenEntry.userId){
             await RefreshToken.updateMany({userId: tokenEntry.userId}, {expireDate: currentDate});
+            res.clearCookie('refreshToken', REFRESH_TOKEN_HTTP_SETTINGS);
             res.status(204).send();
         }else 
             return res.status(401).json({ error: error("INVALID_TOKEN") });

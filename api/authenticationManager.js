@@ -127,8 +127,7 @@ router.get("/", async (req, res) => {
             role: user.role,
             settings: user.settings,
             activeSessions: await RefreshToken.countDocuments(
-                {userId: user.id, expireDate: { $gt: currentDate }}),
-            cookies: await RefreshToken.find({userId: user.id}),
+                {userId: user.id, expireDate: { $gt: currentDate }})
         }
         res.status(200).json(user);
     }else //req.query.type != "personal"

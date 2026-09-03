@@ -4,7 +4,8 @@ const Schema = mongoose.Schema;
 // set up a mongoose model
 module.exports = mongoose.model('RefreshToken', new Schema({ 
     userId: {
-        type: String,
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'AuthenticatedUser',
         index: true
     },
     tokenHash: String,
@@ -14,6 +15,6 @@ module.exports = mongoose.model('RefreshToken', new Schema({
     },
     expireDate: {
         type: Date,
-        index: { expires: "1h" }
+        index: { expires: "30m" }
     }
 }));

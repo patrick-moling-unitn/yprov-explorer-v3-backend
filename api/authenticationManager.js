@@ -86,23 +86,35 @@ router.get("/", async (req, res, next) => {
         if (banned !== '') query.banned = banned;
         if (administrator !== '') query.administrator = administrator;
 
-        let userList = await AuthenticatedUser.find(query);
-            userList = userList.map((user) => {
-            return {
-                self: API_V + '/authenticatedUsers/' + user._id,
-                email: user.email,
-                banned: user.banned,
-                role: user.role,
-                lastLogin: user.lastLogin,
-                activeSessions: null
-            };
-        });
         const currentDate = new Date();
-        for (let user of userList) {
-            const activeSessions = await RefreshToken.countDocuments(
-                    {userId: user.self.split("/").pop(), expireDate: { $gt: currentDate }});
-            user.activeSessions = activeSessions;
-        }
+        let userList = await AuthenticatedUser.aggregate([
+            { $match: query },
+            {
+                $lookup: {
+                    from: 'refreshtokens',
+                    let: { userId: '$_id' },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: { $eq: ['$userId', '$$userId'] },
+                                expireDate: { $gt: currentDate }
+                            }
+                        }
+                    ],
+                    as: 'activeSessionsList'
+                }
+            },
+            {
+                $project: {
+                    self: { $concat: [API_V + '/authenticatedUsers/', { $toString: '$_id' }] },
+                    email: 1,
+                    banned: 1,
+                    role: 1,
+                    lastLogin: 1,
+                    activeSessions: { $size: '$activeSessionsList' }
+                }
+            }
+        ]);
         res.status(200).json(userList);
     }else //req.query.type != "all"
         next()
@@ -307,12 +319,11 @@ router.post("/refresh", cookieParser(), async (req, res) => {
     if (tokenEntry){
         const currentDate = new Date();
         if (tokenEntry.rotated){
-            await RefreshToken.updateMany({userId: tokenEntry.userId}, {expireDate: currentDate});
+            await RefreshToken.deleteMany({userId: tokenEntry.userId});
             return res.status(401).json({ error: error("TOKEN_REUSE_DETECTED") });
         }
-        else if (tokenEntry.expireDate < currentDate){
+        else if (tokenEntry.expireDate < currentDate)
             return res.status(401).json({ error: error("INVALID_TOKEN") });
-        }
 
         let authenticatedUser;
         try {
@@ -391,7 +402,7 @@ router.delete("/refresh", cookieParser(), async (req, res) => {
         }
         const currentDate = new Date(); 
         if (tokenEntry && tokenEntry.expireDate > currentDate && req.loggedUser.id == tokenEntry.userId){
-            await RefreshToken.updateMany({userId: tokenEntry.userId}, {expireDate: currentDate});
+            await RefreshToken.deleteMany({userId: tokenEntry.userId});
             res.clearCookie('refreshToken', REFRESH_TOKEN_HTTP_SETTINGS);
             res.status(204).send();
         }else 
